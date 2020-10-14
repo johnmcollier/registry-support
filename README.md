@@ -1,4 +1,4 @@
-# registry-support
+# registry-support-test
 
 Provide support for devfile registries
 
