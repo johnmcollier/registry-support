@@ -1,17 +1,30 @@
-name: Validate PRs
+name: CI
 
 on:
+  push:
+    branches: [ master ]
   pull_request:
     branches: [ master ]
 
 jobs:
+  go:
+    name: Check index-generator build
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Setup Go environment
+      uses: actions/setup-go@v2.1.2
+
+    - name: Check if index-generator build is working
+      run: index/generator/build.sh
+      
   docker:
     name: Check docker build
     runs-on: ubuntu-latest
     steps:
-    -
-      name: Check out code
+    - name: Check out code
       uses: actions/checkout@v2
-    -
-      name: Check if dockerimage build is working
+      
+    - name: Check if registry image build is working
       run: oci-devfile-registry-metadata/build.sh
