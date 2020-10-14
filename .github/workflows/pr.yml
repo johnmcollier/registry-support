@@ -17,7 +17,7 @@ jobs:
       uses: actions/setup-go@v2.1.2
 
     - name: Check if index-generator build is working
-      run: index/generator/build.sh
+      run: cd index/generator && ./build.sh
       
   docker:
     name: Check docker build
