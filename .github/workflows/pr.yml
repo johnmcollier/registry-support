@@ -1,0 +1,17 @@
+name: Validate PRs
+
+on:
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  docker:
+    name: Check docker build
+    runs-on: ubuntu-latest
+    steps:
+    -
+      name: Check out code
+      uses: actions/checkout@v2
+    -
+      name: Check if dockerimage build is working
+      run: oci-devfile-registry-metadata/build.sh
