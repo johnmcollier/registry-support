@@ -23,11 +23,11 @@ jobs:
       run: cd index/generator && ./build.sh
       
   docker:
-    name: Check docker build
+    name: Check registry docker build
     runs-on: ubuntu-latest
     steps:
     - name: Check out code
       uses: actions/checkout@v2
       
     - name: Check if registry image build is working
-      run: oci-devfile-registry-metadata/build.sh
+      run: cd oci-devfile-registry-metadata && ./build.sh
