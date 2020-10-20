@@ -1,8 +1,9 @@
 # Build the registry index generator
 FROM golang:alpine3.11 AS build
 WORKDIR /tools
-COPY generator .
-RUN ./build.sh
+COPY . .
+#RUN ./build.sh
+RUN go build -o metadata-server main.go
 
 FROM docker.io/httpd:2.4.43-alpine AS registry
 
@@ -23,22 +24,17 @@ RUN wget https://github.com/deislabs/oras/releases/download/v0.8.1/oras_0.8.1_li
   tar -zxf oras_0.8.1_*.tar.gz -C oras-install/ && \
   mv oras-install/oras /usr/local/bin/ && \
   rm -rf oras_0.8.1_*.tar.gz oras-install/
-  
- 
-COPY .htaccess /usr/local/apache2/htdocs/
-RUN chgrp -R 0 /usr/local/apache2/htdocs && \
-      chmod -R g=u /usr/local/apache2/htdocs
 
 
 COPY entrypoint.sh /scripts/entrypoint.sh
 
 # Git clone the devfiles
-# ToDo: Switch to github.com/devfile/catalog/
-RUN git clone https://github.com/odo-devfiles/registry /registry
-COPY --from=build /tools/index-generator /registry/index-generator
+RUN echo hi
+RUN git clone https://github.com/devfile/registry /registry
+COPY --from=build /tools/metadata-server /registry/metadata-server
 RUN chgrp -R 0 /registry && \
     chmod -R g=u /registry
 
 # Load the devfiles into the registry
-ENTRYPOINT ["/scripts/entrypoint.sh"]
-CMD ["httpd-foreground"]
+ENTRYPOINT ["/registry/metadata-server"]
+#CMD ["httpd-foreground"]
