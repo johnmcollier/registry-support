@@ -8,7 +8,7 @@ RUN go build -o metadata-server main.go
 FROM docker.io/httpd:2.4.43-alpine AS registry
 
 # Install and configure dependencies
-RUN apk add --no-cache bash git && \
+RUN apk add --no-cache bash git curl && \
     # Allow htaccess
     sed -i 's|    AllowOverride None|    AllowOverride All|' /usr/local/apache2/conf/httpd.conf && \
     sed -i 's|Listen 80|Listen 8080|' /usr/local/apache2/conf/httpd.conf && \
@@ -29,7 +29,7 @@ RUN wget https://github.com/deislabs/oras/releases/download/v0.8.1/oras_0.8.1_li
 COPY entrypoint.sh /scripts/entrypoint.sh
 
 # Git clone the devfiles
-RUN echo hi
+# ToDo: Switch to github.com/devfile/catalog/
 RUN git clone https://github.com/devfile/registry /registry
 COPY --from=build /tools/metadata-server /registry/metadata-server
 RUN chgrp -R 0 /registry && \
