@@ -22,7 +22,7 @@ const (
 	devfileFileName     = "devfile.yaml"
 	devfileMediaType    = "vnd.devfileio.devfile.layer.v1"
 	registryDevfilePath = "/registry/stacks"
-	registryService     = "registry-demo.apps.jcollier-20201019.devcluster.openshift.com"
+	registryService     = "localhost:5000"
 )
 
 var index []indexSchema.Schema
@@ -43,7 +43,7 @@ func main() {
 
 	// Before starting the server, push the devfile artifacts to the registry
 	for _, devfileIndex := range index {
-		err := pushStacksToRegistry(devfileIndex)
+		err := pushStackToRegistry(devfileIndex)
 		if err != nil {
 			log.Fatal(err.Error())
 		}
@@ -54,18 +54,20 @@ func main() {
 	http.ListenAndServe(":8080", nil)
 }
 
-func pushStacksToRegistry(devfileIndex indexSchema.Schema) error {
+// pushStackToRegistry pushes the given devfile stack to the OCI registry
+// If the push fails for whatever reason, an error is returned
+func pushStackToRegistry(devfileIndex indexSchema.Schema) error {
 	// Load the devfile into memory
 	devfileData, err := ioutil.ReadFile(filepath.Join(registryDevfilePath, devfileIndex.Name, devfileFileName))
 	if err != nil {
 		return err
 	}
-	ref := registryService + "/" + devfileIndex.Links.Self
+	ref := registryService + "/" + devfileIndex.Links["self"]
 
 	ctx := context.Background()
 	resolver := docker.NewResolver(docker.ResolverOptions{PlainHTTP: true})
 
-	// Push file(s) w custom mediatype to registry
+	// Add the devfile (and its custom media type) to the memory store
 	memoryStore := content.NewMemoryStore()
 	desc := memoryStore.Add(devfileFileName, devfileMediaType, devfileData)
 	pushContents := []ocispec.Descriptor{desc}
