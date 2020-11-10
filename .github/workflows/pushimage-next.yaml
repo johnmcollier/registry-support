@@ -26,6 +26,10 @@ jobs:
         username: ${{ secrets.QUAY_USERNAME }}
         password: ${{ secrets.QUAY_PASSWORD }}
     - name: Build the registry metadata image
-      run: cd oci-devfile-registry-metadata && ./build.sh
+      run: oci-devfile-registry-metadata/build.sh
     - name: Push the registry metadata image
-      run: cd oci-devfile-registry-metadata  && ./push.sh quay.io/devfile/metadata-server:next
+      run: oci-devfile-registry-metadata/push.sh quay.io/devfile/metadata-server:next
+    - name: Build the registry proxy image
+      run: registry-proxy/build.sh
+    - name: Push the registry proxy image
+      run: registry-proxy/push.sh quay.io/devfile/metadata-server:next
