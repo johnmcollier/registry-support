@@ -14,7 +14,6 @@ package library
 import (
 	"archive/tar"
 	"compress/gzip"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,8 +23,11 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"text/tabwriter"
 	"time"
+
+	orasctx "github.com/deislabs/oras/pkg/context"
 
 	"github.com/containerd/containerd/remotes/docker"
 	"github.com/deislabs/oras/pkg/content"
@@ -107,8 +109,8 @@ func PrintRegistryStacks(registry string) error {
 	return nil
 }
 
-// PullStackByMediaTypesFromRegistry pulls stack from registry with allowed media types
-func PullStackByMediaTypesFromRegistry(registry string, stack string, allowedMediaTypes []string) error {
+// PullStackByMediaTypesFromRegistry pulls stack from registry with allowed media types to the destination directory
+func PullStackByMediaTypesFromRegistry(registry string, stack string, allowedMediaTypes []string, destDir string) error {
 	// Get the registry index
 	registryIndex, err := GetRegistryStacks(registry)
 	if err != nil {
@@ -130,7 +132,7 @@ func PullStackByMediaTypesFromRegistry(registry string, stack string, allowedMed
 	}
 
 	// Pull stack initialization
-	ctx := context.Background()
+	ctx := orasctx.Background()
 	urlObj, err := url.Parse(registry)
 	if err != nil {
 		return err
@@ -141,25 +143,24 @@ func PullStackByMediaTypesFromRegistry(registry string, stack string, allowedMed
 	}
 	resolver := docker.NewResolver(docker.ResolverOptions{PlainHTTP: plainHTTP})
 	ref := path.Join(urlObj.Host, stackIndex.Links["self"])
-	fileStore := content.NewFileStore("")
+	fileStore := content.NewFileStore(destDir)
 	defer fileStore.Close()
 
 	// Pull stack from registry and save it to disk
-	log.Printf("Pulling stack %s from %s with allowed media types %v...\n", stack, ref, allowedMediaTypes)
-	desc, _, err := oras.Pull(ctx, resolver, ref, fileStore, oras.WithAllowedMediaTypes(allowedMediaTypes))
+	_, _, err = oras.Pull(ctx, resolver, ref, fileStore, oras.WithAllowedMediaTypes(allowedMediaTypes))
 	if err != nil {
-		return fmt.Errorf("Failed to pull stack %s from %s: %v", stack, ref, err)
+		return fmt.Errorf("Failed to pull stack %s from %s with allowed media types %v: %v", stack, ref, allowedMediaTypes, err)
 	}
-	log.Printf("Pulled stack %s from %s with digest %s\n", stack, ref, desc.Digest)
 
 	// Decompress archive.tar
-	if _, err := os.Stat("archive.tar"); err == nil {
-		err := decompress(".", "archive.tar")
+	archivePath := filepath.Join(destDir, "archive.tar")
+	if _, err := os.Stat(archivePath); err == nil {
+		err := decompress(destDir, archivePath)
 		if err != nil {
 			return err
 		}
 
-		err = os.RemoveAll("archive.tar")
+		err = os.RemoveAll(archivePath)
 		if err != nil {
 			return err
 		}
@@ -168,9 +169,9 @@ func PullStackByMediaTypesFromRegistry(registry string, stack string, allowedMed
 	return nil
 }
 
-// PullStackFromRegistry pulls stack from registry with all stack resources (all media types)
-func PullStackFromRegistry(registry string, stack string) error {
-	return PullStackByMediaTypesFromRegistry(registry, stack, DevfileAllMediaTypesList)
+// PullStackFromRegistry pulls stack from registry with all stack resources (all media types) to the destination directory
+func PullStackFromRegistry(registry string, stack string, destDir string) error {
+	return PullStackByMediaTypesFromRegistry(registry, stack, DevfileAllMediaTypesList, destDir)
 }
 
 // decompress extracts the archive file
