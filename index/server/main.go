@@ -13,11 +13,17 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/deislabs/oras/pkg/content"
 	"github.com/deislabs/oras/pkg/oras"
+	indexLibrary "github.com/devfile/registry-support/index/generator/library"
 	indexSchema "github.com/devfile/registry-support/index/generator/schema"
 
 	"github.com/containerd/containerd/remotes/docker"
+	_ "github.com/devfile/registry-support/index/server/docs"
 	"github.com/gin-gonic/gin"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -28,6 +34,7 @@ const (
 	archiveMediaType       = "application/x-tar"
 	archiveName            = "archive.tar"
 	devfileName            = "devfile.yaml"
+	devfileNameHidden      = ".devfile.yaml"
 	devfileConfigMediaType = "application/vnd.devfileio.devfile.config.v2+json"
 	devfileMediaType       = "application/vnd.devfileio.devfile.layer.v1"
 	pngLogoMediaType       = "image/png"
@@ -42,19 +49,36 @@ const (
 )
 
 var mediaTypeMapping = map[string]string{
-	devfileName: devfileMediaType,
-	vsxName:     vsxMediaType,
-	svgLogoName: svgLogoMediaType,
-	pngLogoName: pngLogoMediaType,
-	archiveName: archiveMediaType,
+	devfileName:       devfileMediaType,
+	devfileNameHidden: devfileMediaType,
+	vsxName:           vsxMediaType,
+	svgLogoName:       svgLogoMediaType,
+	pngLogoName:       pngLogoMediaType,
+	archiveName:       archiveMediaType,
 }
 
 var (
-	stacksPath = os.Getenv("DEVFILE_STACKS")
-	indexPath  = os.Getenv("DEVFILE_INDEX")
+	stacksPath      = os.Getenv("DEVFILE_STACKS")
+	indexPath       = os.Getenv("DEVFILE_INDEX")
+	sampleIndexPath = os.Getenv("DEVFILE_SAMPLE_INDEX")
+	stackIndexPath  = os.Getenv("DEVFILE_STACK_INDEX")
+	getIndexLatency = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "index_http_request_duration_seconds",
+			Help:    "Latency of index request in seconds.",
+			Buckets: prometheus.LinearBuckets(0.5, 0.5, 10),
+		},
+		[]string{"status"},
+	)
 )
 
 func main() {
+	// Enable metrics
+	// Run on a separate port and router from the index server so that it's not exposed publicly
+	http.Handle("/metrics", promhttp.Handler())
+	prometheus.MustRegister(getIndexLatency)
+	go http.ListenAndServe(":7071", nil)
+
 	// Wait until registry is up and running
 	err := wait.PollImmediate(time.Millisecond, time.Second*30, func() (bool, error) {
 		resp, err := http.Get(scheme + "://" + registryService)
@@ -90,15 +114,53 @@ func main() {
 	}
 
 	// Before starting the server, push the devfile artifacts to the registry
+	// Build sample_index.json and stack_index.json given index.json
+	var sampleIndex []indexSchema.Schema
+	var stackIndex []indexSchema.Schema
 	for _, devfileIndex := range index {
-		err := pushStackToRegistry(devfileIndex)
-		if err != nil {
-			log.Fatal(err.Error())
+		if devfileIndex.Type == indexSchema.SampleDevfileType {
+			sampleIndex = append(sampleIndex, devfileIndex)
+		} else if devfileIndex.Type == indexSchema.StackDevfileType {
+			stackIndex = append(stackIndex, devfileIndex)
 		}
+
+		if len(devfileIndex.Resources) != 0 {
+			err := pushStackToRegistry(devfileIndex)
+			if err != nil {
+				log.Fatal(err.Error())
+			}
+		}
+	}
+	err = indexLibrary.CreateIndexFile(sampleIndex, sampleIndexPath)
+	if err != nil {
+		log.Fatalf("failed to generate %s: %v", sampleIndexPath, err)
+	}
+	indexLibrary.CreateIndexFile(stackIndex, stackIndexPath)
+	if err != nil {
+		log.Fatalf("failed to generate %s: %v", stackIndexPath, err)
 	}
 
 	// Start the server and serve requests and index.json
 	router := gin.Default()
+
+	router.GET("/", serveDevfileIndex)
+	router.GET("/index", serveDevfileIndex)
+	router.GET("/index.json", serveDevfileIndex)
+
+	router.GET("/index/:type", func(c *gin.Context) {
+		indexType := c.Param("type")
+
+		// Serve the index with type
+		if indexType == string(indexSchema.SampleDevfileType) {
+			c.File(sampleIndexPath)
+		} else if indexType == "all" {
+			c.File(indexPath)
+		} else {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status": fmt.Sprintf("the devfile with %s type didn't exist", indexType),
+			})
+		}
+	})
 
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -117,16 +179,20 @@ func main() {
 						"error":  err.Error(),
 						"status": fmt.Sprintf("failed to pull the devfile of %s", name),
 					})
+					return
 				}
+
 				c.Data(http.StatusOK, http.DetectContentType(bytes), bytes)
+				return
 			}
 		}
+
+		c.JSON(http.StatusNotFound, gin.H{
+			"status": fmt.Sprintf("the devfile of %s didn't exist", name),
+		})
 	})
 
 	router.Static("/stacks", stacksPath)
-	router.StaticFile("/index.json", indexPath)
-	router.StaticFile("/", indexPath)
-	router.StaticFile("/index", indexPath)
 
 	router.Run(":7070")
 }
@@ -148,7 +214,7 @@ func pushStackToRegistry(devfileIndex indexSchema.Schema) error {
 		var mediaType string
 		var found bool
 		switch resource {
-		case devfileName, svgLogoName, pngLogoName, archiveName:
+		case devfileName, devfileNameHidden, svgLogoName, pngLogoName, archiveName:
 			// Get the media type associated with the file
 			if mediaType, found = mediaTypeMapping[resource]; !found {
 				return errors.New("media type not found for file " + resource)
@@ -197,16 +263,42 @@ func pullStackFromRegistry(devfileIndex indexSchema.Schema) ([]byte, error) {
 	memoryStore := content.NewMemoryStore()
 	allowedMediaTypes := []string{devfileMediaType}
 
-	log.Printf("Pulling %s from %s...\n", devfileName, ref)
+	var devfile string
+	for _, resource := range devfileIndex.Resources {
+		if resource == devfileName {
+			devfile = devfileName
+			break
+		}
+		if resource == devfileNameHidden {
+			devfile = devfileNameHidden
+			break
+		}
+	}
+	log.Printf("Pulling %s from %s...\n", devfile, ref)
 	desc, _, err := oras.Pull(ctx, resolver, ref, memoryStore, oras.WithAllowedMediaTypes(allowedMediaTypes))
 	if err != nil {
-		return nil, fmt.Errorf("failed to pull %s from %s: %v", devfileName, ref, err)
+		return nil, fmt.Errorf("failed to pull %s from %s: %v", devfile, ref, err)
 	}
-	_, bytes, ok := memoryStore.GetByName(devfileName)
+	_, bytes, ok := memoryStore.GetByName(devfile)
 	if !ok {
-		return nil, fmt.Errorf("failed to load %s to memory", devfileName)
+		return nil, fmt.Errorf("failed to load %s to memory", devfile)
 	}
 
 	log.Printf("Pulled from %s with digest %s\n", ref, desc.Digest)
 	return bytes, nil
+}
+
+// serveDevfileIndex serves the index.json file located in the container at `serveDevfileIndex`
+func serveDevfileIndex(c *gin.Context) {
+	// Start the counter for the request
+	var status string
+	timer := prometheus.NewTimer(prometheus.ObserverFunc(func(v float64) {
+		getIndexLatency.WithLabelValues(status).Observe(v)
+	}))
+	defer func() {
+		timer.ObserveDuration()
+	}()
+
+	// Serve the index.json file
+	c.File(stackIndexPath)
 }
