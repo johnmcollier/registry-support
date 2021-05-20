@@ -240,6 +240,8 @@ func pushStackToRegistry(devfileIndex indexSchema.Schema) error {
 
 	ref := path.Join(registryService, "/", devfileIndex.Links["self"])
 
+	// Add comment
+	// Hello
 	ctx := context.Background()
 	resolver := docker.NewResolver(docker.ResolverOptions{PlainHTTP: true})
 	log.Printf("Pushing %s to %s...\n", devfileIndex.Name, ref)
